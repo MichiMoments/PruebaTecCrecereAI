@@ -37,8 +37,11 @@ $env:GEMINI_API_KEY = "tu_api_key"
 # Linux/macOS:
 export GEMINI_API_KEY="tu_api_key"
 
-# 4) Ejecutar
+# 4) Ejecutar (deudor por defecto)
 python main.py
+
+# ...o gestionar otro deudor sembrado pasando su cédula (con o sin puntos):
+python main.py 71345890
 ```
 
 > ⚠️ **El programa NO arranca sin una API key válida.** Debes crear el archivo
@@ -64,15 +67,30 @@ El modelo por defecto es `gemini-2.5-flash` y vive como única constante en
 
 ## Supuestos (implementados y asumidos)
 
-- **Deudor semilla:** Liliana Ospina Cano · cédula `1.082.260.472` · saldo
-  `5 125 922` COP · `112` días de mora · producto **Tarjeta de crédito** ·
-  fecha de corte `2026-02-28` (ver [`data.py`](data.py)).
+- **Esquema del deudor** ([`data.py`](data.py), `DebtorRecord`): registro plano,
+  ordenado en dos bloques —**identificación** (`tipo_documento`, `documento`,
+  `nombre`, `fecha_nacimiento`) y **obligación** (`producto`, `saldo`,
+  `dias_mora`, `fecha_corte`).
+- **Deudores de prueba** (en [`data.py`](data.py)): cuatro registros con
+  productos y rangos de saldo/mora distintos para ejercitar la gestión. El de la
+  sesión por defecto es el primero; para gestionar otro, ejecuta
+  `python main.py <cedula>` (con o sin puntos).
+
+  | Cédula | Documento | Nombre | Producto | Saldo (COP) | Mora |
+  |---|---|---|---|---|---|
+  | `1.082.260.472` | CC | Liliana Ospina Cano | Tarjeta de crédito | 5 125 922 | 112 d |
+  | `71.345.890` | CC | Carlos Andrés Restrepo Gómez | Crédito de libre inversión | 9 850 000 | 45 d |
+  | `1.020.456.789` | CC | María Fernanda Quintero Salazar | Crédito de vehículo | 18 200 000 | 78 d |
+  | `1.144.082.356` | CE | Jorge Iván Mejía Loaiza | Crédito educativo | 3 480 000 | 23 d |
 - **Normalización de cédula:** se ignoran puntos/espacios, así `1082260472` y
   `1.082.260.472` resuelven al mismo registro.
 - **Validez de identidad:** es válida solo si **el nombre declarado coincide Y
   la cédula coincide** con el registro. La comparación de nombre es
-  *insensible a mayúsculas y tildes*. Tras `MAX_VALIDATION_ATTEMPTS = 3` intentos
-  fallidos, la gestión pasa a `IDENTIDAD_NO_VALIDADA` y se cierra.
+  *insensible a mayúsculas y tildes*. La **fecha de nacimiento** es un *segundo
+  factor opcional*: si la persona la declara, también debe coincidir
+  (`YYYY-MM-DD`); si no la da, basta con cédula + nombre (compatibilidad hacia
+  atrás). Tras `MAX_VALIDATION_ATTEMPTS = 3` intentos fallidos, la gestión pasa
+  a `IDENTIDAD_NO_VALIDADA` y se cierra.
 - **Cédula desconocida / mal formada:** devuelve un error estructurado
   `NO_ENCONTRADO`, de modo que esa rama es ejercitable.
 - **Dinero** entero en COP; **fechas** en formato `YYYY-MM-DD` (el compromiso
@@ -187,7 +205,7 @@ registrado con quién se habló, y el recado queda en `nota_contacto`.
 
 | Herramienta | Efecto / validación |
 |---|---|
-| `validar_identidad(documento, nombre_declarado)` | La *herramienta* decide el match (cédula + nombre normalizados). En éxito: `identidad_validada=True`, fija `nombre` y marca `tipo_contacto=TITULAR`. |
+| `validar_identidad(documento, nombre_declarado, fecha_nacimiento_declarada?)` | La *herramienta* decide el match (cédula + nombre normalizados; `fecha_nacimiento` como segundo factor opcional). En éxito: `identidad_validada=True`, fija `nombre`, devuelve `tipo_documento` y marca `tipo_contacto=TITULAR`. |
 | `registrar_contacto(documento, tipo_contacto, nota)` | Clasifica con quién se habla cuando NO es el titular: `tipo_contacto ∈ TipoContacto` (`TERCERO`, `NUMERO_EQUIVOCADO`, `TITULAR`). `nota` opcional = recado para el titular (sin datos de la deuda). |
 | `consultar_deuda(documento)` | Devuelve `{saldo, dias_mora, producto, fecha_corte}`. Bloqueada si la identidad no está validada. Cachea la deuda. |
 | `consultar_planes_pago(documento)` | 2–3 planes derivados del saldo (pago único con descuento, 3 y 6 cuotas). |
@@ -209,11 +227,15 @@ en el compromiso persistido.
   Agente de Cobranza Conversacional — Crecere (demo)
 ================================================================
 
-Agente: Buenas tardes, le habla el área de cobranza. Para poder darle
-información, ¿me confirma su nombre completo y su número de cédula, por favor?
+Agente: Buenas tardes, le habla el área de cobranza de Creceré. Para poder
+darle información, ¿me confirma su nombre completo, por favor?
 
-Tú: Soy Liliana Ospina Cano, cédula 1.082.260.472
-   ↪ [validar_identidad] ✓ {'validado': True, 'nombre': 'Liliana Ospina Cano'}
+Tú: Soy Liliana Ospina Cano
+
+Agente: Gracias. Por seguridad, ¿me confirma su fecha de nacimiento?
+
+Tú: 14 de mayo de 1990
+   ↪ [validar_identidad] ✓ {'validado': True, 'nombre': 'Liliana Ospina Cano', 'tipo_documento': 'CC'}
 
 Agente: Gracias, Liliana, queda validada. Le cuento: su Tarjeta de crédito
 presenta un saldo de $5.125.922 con 112 días de mora...

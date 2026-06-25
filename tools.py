@@ -17,7 +17,12 @@ from datetime import date, datetime
 from typing import Any, Callable
 
 from config import MAX_VALIDATION_ATTEMPTS, PROCESS_REF
-from data import buscar_deudor, nombre_coincide, normalizar_documento
+from data import (
+    buscar_deudor,
+    fecha_nacimiento_coincide,
+    nombre_coincide,
+    normalizar_documento,
+)
 from state import (
     Compromiso,
     DebtSnapshot,
@@ -106,26 +111,38 @@ class CobranzaTools:
 
     # -- herramientas de perfil --------------------------------------------
     def validar_identidad(
-        self, documento: str, nombre_declarado: str
+        self,
+        documento: str,
+        nombre_declarado: str,
+        fecha_nacimiento_declarada: str = "",
     ) -> dict[str, Any]:
         """Valida identidad: la cédula Y el nombre deben coincidir con el registro.
 
-        Es la herramienta —no el modelo— quien decide el match. Tras
-        ``MAX_VALIDATION_ATTEMPTS`` fallos, marca la gestión como
-        ``IDENTIDAD_NO_VALIDADA`` y reporta ``bloqueado=True`` para que el modelo
-        cierre.
+        Es la herramienta —no el modelo— quien decide el match. Si se entrega
+        ``fecha_nacimiento_declarada`` (YYYY-MM-DD), se exige como **segundo
+        factor** y también debe coincidir. Tras ``MAX_VALIDATION_ATTEMPTS``
+        fallos, marca la gestión como ``IDENTIDAD_NO_VALIDADA`` y reporta
+        ``bloqueado=True`` para que el modelo cierre.
         """
         if self.state.profile.identidad_validada:
             return {"validado": True, "mensaje": "La identidad ya estaba validada."}
 
         record = buscar_deudor(documento)
         coincide = record is not None and nombre_coincide(nombre_declarado, record)
+        # Segundo factor opcional: si la persona declara fecha de nacimiento,
+        # también debe coincidir.
+        if coincide and fecha_nacimiento_declarada:
+            coincide = fecha_nacimiento_coincide(fecha_nacimiento_declarada, record)
 
         if coincide and self._documento_de_sesion(documento):
             self.state.marcar_identidad_validada(record["nombre"], "validar_identidad")
             # Una identidad validada implica que hablamos con el titular.
             self.state.set_contacto(TipoContacto.TITULAR, None, "validar_identidad")
-            return {"validado": True, "nombre": record["nombre"]}
+            return {
+                "validado": True,
+                "nombre": record["nombre"],
+                "tipo_documento": record["tipo_documento"],
+            }
 
         # Fallo de validación.
         self.validation_attempts += 1
@@ -360,8 +377,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "name": "validar_identidad",
         "description": (
             "Valida la identidad del deudor. La cédula Y el nombre declarado "
-            "deben coincidir con el registro. Llamar ANTES de revelar cualquier "
-            "dato de la deuda."
+            "deben coincidir con el registro. Si la persona da su fecha de "
+            "nacimiento, pásala como segundo factor. Llamar ANTES de revelar "
+            "cualquier dato de la deuda."
         ),
         "parameters": {
             "type": "object",
@@ -370,6 +388,14 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "nombre_declarado": {
                     "type": "string",
                     "description": "Nombre completo que declara la persona.",
+                },
+                "fecha_nacimiento_declarada": {
+                    "type": "string",
+                    "description": (
+                        "Fecha de nacimiento que declara la persona, formato "
+                        "YYYY-MM-DD. Segundo factor opcional; si se entrega, debe "
+                        "coincidir con el registro."
+                    ),
                 },
             },
             "required": ["documento", "nombre_declarado"],
