@@ -150,13 +150,11 @@ class CobranzaAgent:
         self._config = types.GenerateContentConfig(
             system_instruction=construir_system_prompt(documento, primer_nombre),
             tools=[types.Tool(function_declarations=function_declarations)],
-            # Bucle MANUAL: desactivamos la AFC para ejecutar las herramientas
-            # nosotros mismos y demostrar que el modelo dirige la selección.
+            # Bucle MANUAL: desactivamos la AFC para ejecutar las herramientas y demostrar que el modelo dirige la selección
             automatic_function_calling=types.AutomaticFunctionCallingConfig(
                 disable=True
             ),
         )
-        # Historial de la conversación (lo que se reenvía en cada turno).
         self._history: list[types.Content] = []
 
     # -- API con reintentos -------------------------------------------------
