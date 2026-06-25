@@ -1,0 +1,26 @@
+# Secretos / configuración local
+.env
+.env.*
+!.env.example
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Artefactos del agente (perfiles persistidos por sesión)
+snapshots/
+
+# Caché y bytecode de Python
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Editores / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
