@@ -24,10 +24,14 @@ source .venv/bin/activate
 # 2) Dependencias
 pip install -r requirements.txt
 
-# 3) API key (variable de entorno GEMINI_API_KEY)
-# Opción A — archivo .env en deuda_agent/ (se carga automáticamente):
-#   GEMINI_API_KEY=tu_api_key
-# Opción B — exportarla en la shell:
+# 3) API key — REQUERIDA para ejecutar (variable GEMINI_API_KEY)
+# Opción A (recomendada) — crea tu .env a partir de la plantilla y reemplaza
+# el valor de ejemplo por tu key real de Google AI Studio:
+cp .env.example .env          # Windows (PowerShell): copy .env.example .env
+# luego edita .env y cambia "tu_api_key_aqui" por tu key:
+#   GEMINI_API_KEY=AIza...tu_key_real...
+#
+# Opción B — exportarla en la shell en vez de usar .env:
 # Windows (PowerShell):
 $env:GEMINI_API_KEY = "tu_api_key"
 # Linux/macOS:
@@ -37,10 +41,16 @@ export GEMINI_API_KEY="tu_api_key"
 python main.py
 ```
 
-> El programa carga automáticamente un archivo `.env` ubicado junto al código
-> (vía `python-dotenv`) y, si no existe, usa las variables de entorno del
-> sistema. No hay ninguna key embebida en el código. **No subas tu `.env` a un
-> repositorio.**
+> ⚠️ **El programa NO arranca sin una API key válida.** Debes crear el archivo
+> `.env` (cópialo de `.env.example`) y **reemplazar el valor de ejemplo
+> `tu_api_key_aqui` por tu key real**; si dejas el valor de ejemplo, Gemini
+> rechazará las peticiones. Obtén tu key gratis en
+> <https://aistudio.google.com/apikey>.
+>
+> El programa carga automáticamente el `.env` ubicado junto al código (vía
+> `python-dotenv`) y, si no existe, usa las variables de entorno del sistema. No
+> hay ninguna key embebida en el código. **No subas tu `.env` a un repositorio**
+> (ya está en `.gitignore`).
 
 Para terminar la sesión escribe `salir` / `exit` (o `Ctrl-C`). Al cerrar se
 imprime un resumen y la **línea de tiempo del historial**. El perfil se persiste
