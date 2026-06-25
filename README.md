@@ -1,9 +1,9 @@
 # Agente de Cobranza Conversacional (consola, Python + Gemini)
 
-Agente de línea de comandos que ejecuta una llamada de **cobranza** contra un
-deudor ficticio, íntegramente en **español de Colombia**. En una sesión el
+Agente de línea de comandos que ejecuta una llamada de cobranza contra un
+deudor ficticio, íntegramente en español de Colombia En una sesión el
 agente valida identidad, explica la deuda, propone planes, negocia objeciones,
-registra el compromiso de pago y cierra la gestión. El **LLM (Google Gemini)**
+registra el compromiso de pago y cierra la gestión. El LLM (Google Gemini
 es quien decide qué herramienta llamar y con qué argumentos; el código solo
 despacha lo que el modelo pide.
 
@@ -11,7 +11,7 @@ despacha lo que el modelo pide.
 
 ## Cómo ejecutar
 
-Requisitos: **Python 3.10+** y una **API key de Google AI Studio** (no Vertex/GCP).
+Requisitos: Python 3.10 y una API key de Google AI Studio.
 
 ```bash
 # 1) Entorno virtual
@@ -46,10 +46,9 @@ python main.py 71345890
  
 
 Para terminar la sesión escribe `salir` / `exit` (o `Ctrl-C`). Al cerrar se
-imprime un resumen y la **línea de tiempo del historial**. El perfil se persiste
+imprime un resumen y la línea de tiempo del historial El perfil se persiste
 en `snapshots/perfil_1082260472.json`.
 
 El modelo por defecto es `gemini-2.5-flash` y vive como única constante en
-[`config.py`](config.py) (`MODEL_NAME`); si quieres abaratar puedes cambiarlo a
-`gemini-2.5-flash-lite`. (`gemini-2.0-flash` fue dado de baja el 2026-06-01.)
+[`config.py`](config.py)(`MODEL_NAME`).
 
