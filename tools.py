@@ -25,6 +25,7 @@ from state import (
     EstadoGestion,
     Objecion,
     StateManager,
+    TipoContacto,
     TipoObjecion,
 )
 
@@ -58,6 +59,7 @@ class CobranzaTools:
         # Registro nombre-de-herramienta -> implementación.
         self._registry: dict[str, Callable[..., dict[str, Any]]] = {
             "validar_identidad": self.validar_identidad,
+            "registrar_contacto": self.registrar_contacto,
             "consultar_deuda": self.consultar_deuda,
             "consultar_planes_pago": self.consultar_planes_pago,
             "registrar_objecion": self.registrar_objecion,
@@ -121,6 +123,8 @@ class CobranzaTools:
 
         if coincide and self._documento_de_sesion(documento):
             self.state.marcar_identidad_validada(record["nombre"], "validar_identidad")
+            # Una identidad validada implica que hablamos con el titular.
+            self.state.set_contacto(TipoContacto.TITULAR, None, "validar_identidad")
             return {"validado": True, "nombre": record["nombre"]}
 
         # Fallo de validación.
@@ -171,6 +175,26 @@ class CobranzaTools:
                 niveles_validos=[d.value for d in DisposicionPago],
             )
         self.state.set_disposicion(nivel_enum, "registrar_disposicion")
+        return {"ok": True}
+
+    def registrar_contacto(
+        self, documento: str, tipo_contacto: str, nota: str = ""
+    ) -> dict[str, Any]:
+        """Clasifica con quién se está hablando y opcionalmente guarda un recado.
+
+        Pensada para los casos en que NO hablamos con el titular: ``TERCERO``
+        (contestó otra persona) o ``NUMERO_EQUIVOCADO``. ``nota`` permite dejar
+        una razón/recado para que el titular se comunique, sin revelar la deuda.
+        """
+        try:
+            tipo_enum = TipoContacto(tipo_contacto)
+        except ValueError:
+            return _error(
+                "TIPO_CONTACTO_INVALIDO",
+                f"'{tipo_contacto}' no es un tipo de contacto válido.",
+                tipos_validos=[t.value for t in TipoContacto],
+            )
+        self.state.set_contacto(tipo_enum, nota or None, "registrar_contacto")
         return {"ok": True}
 
     # -- herramientas de negocio -------------------------------------------
@@ -415,6 +439,30 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "registrar_contacto",
+        "description": (
+            "Clasifica con quién se habla cuando NO es el titular validado: "
+            "TERCERO (contestó otra persona) o NUMERO_EQUIVOCADO. Usa `nota` para "
+            "dejar un recado para que el titular se comunique, sin revelar la deuda."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "documento": _DOC_PROP,
+                "tipo_contacto": {
+                    "type": "string",
+                    "enum": ["TERCERO", "NUMERO_EQUIVOCADO", "TITULAR"],
+                    "description": "Con quién se está hablando.",
+                },
+                "nota": {
+                    "type": "string",
+                    "description": "Recado para el titular (opcional, sin datos de la deuda).",
+                },
+            },
+            "required": ["documento", "tipo_contacto"],
+        },
+    },
+    {
         "name": "registrar_compromiso_pago",
         "description": (
             "Registra el compromiso de pago. monto: entero positivo ≤ saldo; "
@@ -439,8 +487,11 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "actualizar_estado_gestion",
         "description": (
-            "Fija el resultado final de la gestión (COMPROMISO_DE_PAGO, "
-            "SIN_ACUERDO, IDENTIDAD_NO_VALIDADA, ABANDONADA)."
+            "Fija el resultado final de la gestión. Usa: COMPROMISO_DE_PAGO (hay "
+            "acuerdo), SIN_ACUERDO (sin acuerdo de pago), IDENTIDAD_NO_VALIDADA "
+            "(no se pudo validar), NUMERO_EQUIVOCADO (el número no es del titular), "
+            "CONTACTO_TERCERO (contestó un tercero), DEUDA_NO_RECONOCIDA (el titular "
+            "niega la deuda sin resolverse)."
         ),
         "parameters": {
             "type": "object",

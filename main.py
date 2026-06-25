@@ -23,7 +23,7 @@ for _stream in (sys.stdout, sys.stdin):
 
 from agent import AgentError, CobranzaAgent
 from config import SNAPSHOT_DIR
-from state import EstadoGestion, StateManager
+from state import EstadoGestion, StateManager, TipoContacto
 from tools import CobranzaTools
 
 # Obligación bajo gestión en esta sesión (cédula normalizada del deudor semilla).
@@ -54,6 +54,10 @@ def imprimir_resumen(state: StateManager) -> None:
     print(f"Documento:           {p.documento}")
     print(f"Nombre:              {p.nombre or '(no validado)'}")
     print(f"Identidad validada:  {p.identidad_validada}")
+    if p.tipo_contacto != TipoContacto.DESCONOCIDO:
+        print(f"Tipo de contacto:    {p.tipo_contacto.value}")
+    if p.nota_contacto:
+        print(f"Recado:              {p.nota_contacto}")
     if p.deuda:
         print(
             f"Deuda:               saldo={p.deuda.saldo} COP | "

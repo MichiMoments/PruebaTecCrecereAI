@@ -157,19 +157,44 @@ mitad de la conversación y verlo cambiar.
   quedó a medias se marca `ABANDONADA`. Nunca se filtra un stack trace por fallos
   esperados.
 
+### Casos especiales de la llamada (con quién hablo + protección de datos)
+Tres situaciones reales de cobranza, manejadas por **guía en el system prompt**
+(no por reglas en código) y dejando el desenlace observable en el estado:
+
+- **No reconoce la deuda** (solo con el titular ya validado): el agente registra
+  `registrar_objecion(NO_RECONOCE_DEUDA)`, reafirma **únicamente** con las cifras
+  de `consultar_deuda`, ofrece radicar una reclamación/PQR y ajusta la
+  disposición. Si no se resuelve, cierra en `DEUDA_NO_RECONOCIDA`.
+- **Número equivocado:** el agente se disculpa **sin** mencionar que es una deuda,
+  llama `registrar_contacto(NUMERO_EQUIVOCADO, nota)` y cierra en
+  `NUMERO_EQUIVOCADO`. No gasta intentos de validación.
+- **Tercero no titular:** **no** revela ningún dato; ofrece dejar un recado para
+  que el titular se comunique, llama `registrar_contacto(TERCERO, nota)` y cierra
+  en `CONTACTO_TERCERO`.
+
+**Protección de datos (Habeas Data / Ley 1266 de 2008):** la no-divulgación a
+quien no sea el titular validado se garantiza en **dos niveles**: (1) el guardrail
+de `consultar_deuda`/`consultar_planes_pago`, que rechaza con
+`IDENTIDAD_NO_VALIDADA` mientras `identidad_validada` sea `False` (defensa real en
+el backend, no solo en el prompt); y (2) la guía del prompt para no invocar esas
+herramientas ni revelar nada ante un tercero o número equivocado. El nuevo enum
+`TipoContacto` (`DESCONOCIDO`/`TITULAR`/`TERCERO`/`NUMERO_EQUIVOCADO`) deja
+registrado con quién se habló, y el recado queda en `nota_contacto`.
+
 ---
 
 ## Superficie de herramientas
 
 | Herramienta | Efecto / validación |
 |---|---|
-| `validar_identidad(documento, nombre_declarado)` | La *herramienta* decide el match (cédula + nombre normalizados). En éxito: `identidad_validada=True`, fija `nombre`. |
+| `validar_identidad(documento, nombre_declarado)` | La *herramienta* decide el match (cédula + nombre normalizados). En éxito: `identidad_validada=True`, fija `nombre` y marca `tipo_contacto=TITULAR`. |
+| `registrar_contacto(documento, tipo_contacto, nota)` | Clasifica con quién se habla cuando NO es el titular: `tipo_contacto ∈ TipoContacto` (`TERCERO`, `NUMERO_EQUIVOCADO`, `TITULAR`). `nota` opcional = recado para el titular (sin datos de la deuda). |
 | `consultar_deuda(documento)` | Devuelve `{saldo, dias_mora, producto, fecha_corte}`. Bloqueada si la identidad no está validada. Cachea la deuda. |
 | `consultar_planes_pago(documento)` | 2–3 planes derivados del saldo (pago único con descuento, 3 y 6 cuotas). |
 | `registrar_objecion(documento, tipo, detalle)` | `tipo ∈ TipoObjecion`. |
 | `registrar_disposicion(documento, nivel)` | `nivel ∈ DisposicionPago`. |
 | `registrar_compromiso_pago(documento, monto, fecha)` | Monto entero positivo ≤ saldo; fecha `YYYY-MM-DD` futura; estampa `referencia_proceso = "CRC-5922"`; evita duplicados. |
-| `actualizar_estado_gestion(documento, estado)` | `estado ∈ EstadoGestion`. |
+| `actualizar_estado_gestion(documento, estado)` | `estado ∈ EstadoGestion` (incluye `NUMERO_EQUIVOCADO`, `CONTACTO_TERCERO`, `DEUDA_NO_RECONOCIDA`). |
 
 La referencia interna del proceso **`CRC-5922`** (ticket CRC-5922) se define en
 `config.PROCESS_REF` y se estampa dentro de `registrar_compromiso_pago`, quedando
@@ -227,6 +252,38 @@ Compromiso:          100000 COP el 2026-07-04 (ref. CRC-5922)
   turno 4 → estado_gestion: EN_CURSO→COMPROMISO_DE_PAGO (actualizar_estado_gestion)
 ================================================================
 ```
+
+### Caso especial: contesta un tercero (sin divulgar datos)
+
+```
+Agente: Buenas tardes, ¿hablo con Liliana Ospina, por favor?
+
+Tú: No, soy el esposo. Ella no se encuentra ahora.
+   ↪ [registrar_contacto] ✓ {'ok': True}
+
+Agente: Entiendo, gracias. Es un asunto personal de Liliana; ¿sería tan amable
+de pedirle que se comunique con nuestra línea de atención cuando pueda?
+   ↪ [actualizar_estado_gestion] ✓ {'ok': True}
+
+Tú: salir
+
+================================================================
+RESUMEN DE LA GESTIÓN
+================================================================
+Identidad validada:  False
+Tipo de contacto:    TERCERO
+Recado:              Pedir a la titular que devuelva la llamada a la línea de atención
+Estado de gestión:   CONTACTO_TERCERO
+
+--- Línea de tiempo (historial, actualización al vuelo) ---
+  turno 1 → tipo_contacto: DESCONOCIDO→TERCERO (registrar_contacto)
+  turno 1 → nota_contacto: None→Pedir a la titular que devuelva... (registrar_contacto)
+  turno 1 → estado_gestion: EN_CURSO→CONTACTO_TERCERO (actualizar_estado_gestion)
+================================================================
+```
+
+Nótese que **nunca se llamó `consultar_deuda`** ni se mencionó saldo/producto: no
+se divulga nada a un tercero.
 
 ---
 
