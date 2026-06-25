@@ -48,3 +48,7 @@ MAX_VALIDATION_ATTEMPTS: int = 3
 # Referencia interna del proceso (ticket CRC-5922). Debe quedar estampada en
 # todo compromiso de pago registrado.
 PROCESS_REF: str = "CRC-5922"
+
+# Identidad del agente: nombre de la empresa con la que se presenta. El agente
+# se identifica como el asistente virtual (IA) de esta entidad.
+COMPANY_NAME: str = "Creceré"

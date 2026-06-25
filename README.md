@@ -37,8 +37,11 @@ $env:GEMINI_API_KEY = "tu_api_key"
 # Linux/macOS:
 export GEMINI_API_KEY="tu_api_key"
 
-# 4) Ejecutar
+# 4) Ejecutar (deudor por defecto)
 python main.py
+
+# ...o gestionar otro deudor sembrado pasando su cédula (con o sin puntos):
+python main.py 71345890
 ```
 
 > ⚠️ **El programa NO arranca sin una API key válida.** Debes crear el archivo
@@ -64,15 +67,30 @@ El modelo por defecto es `gemini-2.5-flash` y vive como única constante en
 
 ## Supuestos (implementados y asumidos)
 
-- **Deudor semilla:** Liliana Ospina Cano · cédula `1.082.260.472` · saldo
-  `5 125 922` COP · `112` días de mora · producto **Tarjeta de crédito** ·
-  fecha de corte `2026-02-28` (ver [`data.py`](data.py)).
+- **Esquema del deudor** ([`data.py`](data.py), `DebtorRecord`): registro plano,
+  ordenado en dos bloques —**identificación** (`tipo_documento`, `documento`,
+  `nombre`, `fecha_nacimiento`) y **obligación** (`producto`, `saldo`,
+  `dias_mora`, `fecha_corte`).
+- **Deudores de prueba** (en [`data.py`](data.py)): cuatro registros con
+  productos y rangos de saldo/mora distintos para ejercitar la gestión. El de la
+  sesión por defecto es el primero; para gestionar otro, ejecuta
+  `python main.py <cedula>` (con o sin puntos).
+
+  | Cédula | Documento | Nombre | Producto | Saldo (COP) | Mora |
+  |---|---|---|---|---|---|
+  | `1.082.260.472` | CC | Liliana Ospina Cano | Tarjeta de crédito | 5 125 922 | 112 d |
+  | `71.345.890` | CC | Carlos Andrés Restrepo Gómez | Crédito de libre inversión | 9 850 000 | 45 d |
+  | `1.020.456.789` | CC | María Fernanda Quintero Salazar | Crédito de vehículo | 18 200 000 | 78 d |
+  | `1.144.082.356` | CE | Jorge Iván Mejía Loaiza | Crédito educativo | 3 480 000 | 23 d |
 - **Normalización de cédula:** se ignoran puntos/espacios, así `1082260472` y
   `1.082.260.472` resuelven al mismo registro.
 - **Validez de identidad:** es válida solo si **el nombre declarado coincide Y
   la cédula coincide** con el registro. La comparación de nombre es
-  *insensible a mayúsculas y tildes*. Tras `MAX_VALIDATION_ATTEMPTS = 3` intentos
-  fallidos, la gestión pasa a `IDENTIDAD_NO_VALIDADA` y se cierra.
+  *insensible a mayúsculas y tildes*. La **fecha de nacimiento** es un *segundo
+  factor opcional*: si la persona la declara, también debe coincidir
+  (`YYYY-MM-DD`); si no la da, basta con cédula + nombre (compatibilidad hacia
+  atrás). Tras `MAX_VALIDATION_ATTEMPTS = 3` intentos fallidos, la gestión pasa
+  a `IDENTIDAD_NO_VALIDADA` y se cierra.
 - **Cédula desconocida / mal formada:** devuelve un error estructurado
   `NO_ENCONTRADO`, de modo que esa rama es ejercitable.
 - **Dinero** entero en COP; **fechas** en formato `YYYY-MM-DD` (el compromiso
@@ -157,19 +175,44 @@ mitad de la conversación y verlo cambiar.
   quedó a medias se marca `ABANDONADA`. Nunca se filtra un stack trace por fallos
   esperados.
 
+### Casos especiales de la llamada (con quién hablo + protección de datos)
+Tres situaciones reales de cobranza, manejadas por **guía en el system prompt**
+(no por reglas en código) y dejando el desenlace observable en el estado:
+
+- **No reconoce la deuda** (solo con el titular ya validado): el agente registra
+  `registrar_objecion(NO_RECONOCE_DEUDA)`, reafirma **únicamente** con las cifras
+  de `consultar_deuda`, ofrece radicar una reclamación/PQR y ajusta la
+  disposición. Si no se resuelve, cierra en `DEUDA_NO_RECONOCIDA`.
+- **Número equivocado:** el agente se disculpa **sin** mencionar que es una deuda,
+  llama `registrar_contacto(NUMERO_EQUIVOCADO, nota)` y cierra en
+  `NUMERO_EQUIVOCADO`. No gasta intentos de validación.
+- **Tercero no titular:** **no** revela ningún dato; ofrece dejar un recado para
+  que el titular se comunique, llama `registrar_contacto(TERCERO, nota)` y cierra
+  en `CONTACTO_TERCERO`.
+
+**Protección de datos (Habeas Data / Ley 1266 de 2008):** la no-divulgación a
+quien no sea el titular validado se garantiza en **dos niveles**: (1) el guardrail
+de `consultar_deuda`/`consultar_planes_pago`, que rechaza con
+`IDENTIDAD_NO_VALIDADA` mientras `identidad_validada` sea `False` (defensa real en
+el backend, no solo en el prompt); y (2) la guía del prompt para no invocar esas
+herramientas ni revelar nada ante un tercero o número equivocado. El nuevo enum
+`TipoContacto` (`DESCONOCIDO`/`TITULAR`/`TERCERO`/`NUMERO_EQUIVOCADO`) deja
+registrado con quién se habló, y el recado queda en `nota_contacto`.
+
 ---
 
 ## Superficie de herramientas
 
 | Herramienta | Efecto / validación |
 |---|---|
-| `validar_identidad(documento, nombre_declarado)` | La *herramienta* decide el match (cédula + nombre normalizados). En éxito: `identidad_validada=True`, fija `nombre`. |
+| `validar_identidad(documento, nombre_declarado, fecha_nacimiento_declarada?)` | La *herramienta* decide el match (cédula + nombre normalizados; `fecha_nacimiento` como segundo factor opcional). En éxito: `identidad_validada=True`, fija `nombre`, devuelve `tipo_documento` y marca `tipo_contacto=TITULAR`. |
+| `registrar_contacto(documento, tipo_contacto, nota)` | Clasifica con quién se habla cuando NO es el titular: `tipo_contacto ∈ TipoContacto` (`TERCERO`, `NUMERO_EQUIVOCADO`, `TITULAR`). `nota` opcional = recado para el titular (sin datos de la deuda). |
 | `consultar_deuda(documento)` | Devuelve `{saldo, dias_mora, producto, fecha_corte}`. Bloqueada si la identidad no está validada. Cachea la deuda. |
 | `consultar_planes_pago(documento)` | 2–3 planes derivados del saldo (pago único con descuento, 3 y 6 cuotas). |
 | `registrar_objecion(documento, tipo, detalle)` | `tipo ∈ TipoObjecion`. |
 | `registrar_disposicion(documento, nivel)` | `nivel ∈ DisposicionPago`. |
 | `registrar_compromiso_pago(documento, monto, fecha)` | Monto entero positivo ≤ saldo; fecha `YYYY-MM-DD` futura; estampa `referencia_proceso = "CRC-5922"`; evita duplicados. |
-| `actualizar_estado_gestion(documento, estado)` | `estado ∈ EstadoGestion`. |
+| `actualizar_estado_gestion(documento, estado)` | `estado ∈ EstadoGestion` (incluye `NUMERO_EQUIVOCADO`, `CONTACTO_TERCERO`, `DEUDA_NO_RECONOCIDA`). |
 
 La referencia interna del proceso **`CRC-5922`** (ticket CRC-5922) se define en
 `config.PROCESS_REF` y se estampa dentro de `registrar_compromiso_pago`, quedando
@@ -184,11 +227,15 @@ en el compromiso persistido.
   Agente de Cobranza Conversacional — Crecere (demo)
 ================================================================
 
-Agente: Buenas tardes, le habla el área de cobranza. Para poder darle
-información, ¿me confirma su nombre completo y su número de cédula, por favor?
+Agente: Buenas tardes, le habla el área de cobranza de Creceré. Para poder
+darle información, ¿me confirma su nombre completo, por favor?
 
-Tú: Soy Liliana Ospina Cano, cédula 1.082.260.472
-   ↪ [validar_identidad] ✓ {'validado': True, 'nombre': 'Liliana Ospina Cano'}
+Tú: Soy Liliana Ospina Cano
+
+Agente: Gracias. Por seguridad, ¿me confirma su fecha de nacimiento?
+
+Tú: 14 de mayo de 1990
+   ↪ [validar_identidad] ✓ {'validado': True, 'nombre': 'Liliana Ospina Cano', 'tipo_documento': 'CC'}
 
 Agente: Gracias, Liliana, queda validada. Le cuento: su Tarjeta de crédito
 presenta un saldo de $5.125.922 con 112 días de mora...
@@ -227,6 +274,38 @@ Compromiso:          100000 COP el 2026-07-04 (ref. CRC-5922)
   turno 4 → estado_gestion: EN_CURSO→COMPROMISO_DE_PAGO (actualizar_estado_gestion)
 ================================================================
 ```
+
+### Caso especial: contesta un tercero (sin divulgar datos)
+
+```
+Agente: Buenas tardes, ¿hablo con Liliana Ospina, por favor?
+
+Tú: No, soy el esposo. Ella no se encuentra ahora.
+   ↪ [registrar_contacto] ✓ {'ok': True}
+
+Agente: Entiendo, gracias. Es un asunto personal de Liliana; ¿sería tan amable
+de pedirle que se comunique con nuestra línea de atención cuando pueda?
+   ↪ [actualizar_estado_gestion] ✓ {'ok': True}
+
+Tú: salir
+
+================================================================
+RESUMEN DE LA GESTIÓN
+================================================================
+Identidad validada:  False
+Tipo de contacto:    TERCERO
+Recado:              Pedir a la titular que devuelva la llamada a la línea de atención
+Estado de gestión:   CONTACTO_TERCERO
+
+--- Línea de tiempo (historial, actualización al vuelo) ---
+  turno 1 → tipo_contacto: DESCONOCIDO→TERCERO (registrar_contacto)
+  turno 1 → nota_contacto: None→Pedir a la titular que devuelva... (registrar_contacto)
+  turno 1 → estado_gestion: EN_CURSO→CONTACTO_TERCERO (actualizar_estado_gestion)
+================================================================
+```
+
+Nótese que **nunca se llamó `consultar_deuda`** ni se mencionó saldo/producto: no
+se divulga nada a un tercero.
 
 ---
 

@@ -5,13 +5,15 @@ Ejecuta una sesión de cobranza contra un deudor. Cablea las tres capas
 cerrar, imprime un resumen y la línea de tiempo del ``historial`` que demuestra
 que el perfil se fue actualizando turno a turno.
 
-Uso:  python main.py
+Uso:  python main.py [cedula]
+      Sin argumento gestiona el deudor por defecto; con una cédula sembrada
+      (con o sin puntos) gestiona ese deudor.
 """
 
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import Any, Optional
 
 # La consola de Windows suele venir en cp1252; forzamos UTF-8 para que los
 # acentos y la ñ se vean bien.
@@ -23,13 +25,41 @@ for _stream in (sys.stdout, sys.stdin):
 
 from agent import AgentError, CobranzaAgent
 from config import SNAPSHOT_DIR
-from state import EstadoGestion, StateManager
+from data import buscar_deudor, listar_deudores, normalizar_documento
+from state import EstadoGestion, StateManager, TipoContacto
 from tools import CobranzaTools
 
-# Obligación bajo gestión en esta sesión (cédula normalizada del deudor semilla).
-SESSION_DOCUMENTO = "1082260472"
+# Cédula del deudor por defecto (si no se pasa una por argumento de línea de
+# comandos). Se puede gestionar cualquier otra cédula sembrada con
+# `python main.py <cedula>`.
+DEFAULT_DOCUMENTO = "1082260472"
 
 SALIR = {"salir", "exit", "quit"}
+
+
+def _resolver_documento(argv: list[str]) -> Optional[str]:
+    """Resuelve qué cédula gestiona la sesión a partir de los argumentos.
+
+    - Sin argumento → ``DEFAULT_DOCUMENTO``.
+    - Con una cédula sembrada (con o sin puntos) → esa cédula normalizada.
+    - Con una cédula inexistente → imprime el error y las cédulas disponibles y
+      devuelve ``None`` para que el programa termine.
+    """
+    if len(argv) <= 1:
+        return DEFAULT_DOCUMENTO
+
+    documento = normalizar_documento(argv[1])
+    if buscar_deudor(documento) is not None:
+        return documento
+
+    print(f"[Error] No hay ningún deudor con la cédula '{argv[1]}'.")
+    print("Deudores disponibles:")
+    for rec in listar_deudores():
+        print(
+            f"  - {rec['documento']}  {rec['nombre']} ({rec['producto']})"
+        )
+    print("\nUso: python main.py [cedula]")
+    return None
 
 
 def _trace_tool(name: str, args: dict[str, Any], resultado: Any) -> None:
@@ -54,6 +84,10 @@ def imprimir_resumen(state: StateManager) -> None:
     print(f"Documento:           {p.documento}")
     print(f"Nombre:              {p.nombre or '(no validado)'}")
     print(f"Identidad validada:  {p.identidad_validada}")
+    if p.tipo_contacto != TipoContacto.DESCONOCIDO:
+        print(f"Tipo de contacto:    {p.tipo_contacto.value}")
+    if p.nota_contacto:
+        print(f"Recado:              {p.nota_contacto}")
     if p.deuda:
         print(
             f"Deuda:               saldo={p.deuda.saldo} COP | "
@@ -87,17 +121,27 @@ def imprimir_resumen(state: StateManager) -> None:
 
 def main() -> None:
     """Punto de entrada: corre una sesión completa de cobranza."""
-    state = StateManager(SESSION_DOCUMENTO, SNAPSHOT_DIR)
+    documento = _resolver_documento(sys.argv)
+    if documento is None:
+        return
+
+    state = StateManager(documento, SNAPSHOT_DIR)
     tools = CobranzaTools(state)
 
+    # Banner del lado del gestor: a quién corresponde la obligación gestionada
+    # (info de la consola, no se le revela al titular sin validar).
+    deudor = buscar_deudor(documento)
     print("=" * 64)
     print("  Agente de Cobranza Conversacional — Crecere (demo)")
+    print(
+        f"  Sesión sobre: {documento} · {deudor['nombre']} · {deudor['producto']}"
+    )
     print("  Escribe tus respuestas como si fueras el deudor.")
     print("  Comandos: 'salir' / 'exit' para terminar (Ctrl-C también).")
     print("=" * 64 + "\n")
 
     try:
-        agent = CobranzaAgent(tools, SESSION_DOCUMENTO, on_tool_call=_trace_tool)
+        agent = CobranzaAgent(tools, documento, on_tool_call=_trace_tool)
     except AgentError as exc:
         print(f"[Error de configuración] {exc}")
         return

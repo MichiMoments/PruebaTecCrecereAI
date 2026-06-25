@@ -39,6 +39,19 @@ class EstadoGestion(str, Enum):
     SIN_ACUERDO = "SIN_ACUERDO"
     IDENTIDAD_NO_VALIDADA = "IDENTIDAD_NO_VALIDADA"
     ABANDONADA = "ABANDONADA"
+    # Casos especiales (con quién se habló):
+    NUMERO_EQUIVOCADO = "NUMERO_EQUIVOCADO"      # el número no es del titular
+    CONTACTO_TERCERO = "CONTACTO_TERCERO"        # contestó un tercero, no el titular
+    DEUDA_NO_RECONOCIDA = "DEUDA_NO_RECONOCIDA"  # el titular niega la deuda sin resolver
+
+
+class TipoContacto(str, Enum):
+    """Clasificación de con quién se está hablando en la llamada."""
+
+    DESCONOCIDO = "DESCONOCIDO"
+    TITULAR = "TITULAR"
+    TERCERO = "TERCERO"
+    NUMERO_EQUIVOCADO = "NUMERO_EQUIVOCADO"
 
 
 class TipoObjecion(str, Enum):
@@ -118,6 +131,8 @@ class DebtorProfile:
     documento: str
     nombre: Optional[str] = None
     identidad_validada: bool = False
+    tipo_contacto: TipoContacto = TipoContacto.DESCONOCIDO
+    nota_contacto: Optional[str] = None  # recado dejado para el titular
     deuda: Optional[DebtSnapshot] = None
     disposicion_pago: DisposicionPago = DisposicionPago.DESCONOCIDA
     objeciones: list[Objecion] = field(default_factory=list)
@@ -131,6 +146,8 @@ class DebtorProfile:
             "documento": self.documento,
             "nombre": self.nombre,
             "identidad_validada": self.identidad_validada,
+            "tipo_contacto": self.tipo_contacto.value,
+            "nota_contacto": self.nota_contacto,
             "deuda": self.deuda.to_dict() if self.deuda else None,
             "disposicion_pago": self.disposicion_pago.value,
             "objeciones": [o.to_dict() for o in self.objeciones],
@@ -217,6 +234,25 @@ class StateManager:
         anterior = self.profile.disposicion_pago.value
         self.profile.disposicion_pago = nivel
         self._registrar("disposicion_pago", anterior, nivel.value, origen)
+
+    def set_contacto(
+        self, tipo: TipoContacto, nota: Optional[str], origen: str
+    ) -> None:
+        """Clasifica con quién se habla y, si llega, guarda un recado.
+
+        Registra el cambio de ``tipo_contacto`` y, cuando se entrega un recado
+        (``nota``), también el de ``nota_contacto``.
+        """
+        if self.profile.tipo_contacto != tipo:
+            self._registrar(
+                "tipo_contacto", self.profile.tipo_contacto.value, tipo.value, origen
+            )
+            self.profile.tipo_contacto = tipo
+        if nota:
+            self._registrar(
+                "nota_contacto", self.profile.nota_contacto, nota, origen
+            )
+            self.profile.nota_contacto = nota
 
     def set_compromiso(self, compromiso: Compromiso, origen: str) -> None:
         """Registra el compromiso de pago acordado."""
