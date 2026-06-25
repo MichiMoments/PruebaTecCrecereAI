@@ -84,13 +84,18 @@ El modelo por defecto es `gemini-2.5-flash` y vive como única constante en
   | `1.144.082.356` | CE | Jorge Iván Mejía Loaiza | Crédito educativo | 3 480 000 | 23 d |
 - **Normalización de cédula:** se ignoran puntos/espacios, así `1082260472` y
   `1.082.260.472` resuelven al mismo registro.
-- **Validez de identidad:** es válida solo si **el nombre declarado coincide Y
-  la cédula coincide** con el registro. La comparación de nombre es
-  *insensible a mayúsculas y tildes*. La **fecha de nacimiento** es un *segundo
-  factor opcional*: si la persona la declara, también debe coincidir
-  (`YYYY-MM-DD`); si no la da, basta con cédula + nombre (compatibilidad hacia
-  atrás). Tras `MAX_VALIDATION_ATTEMPTS = 3` intentos fallidos, la gestión pasa
-  a `IDENTIDAD_NO_VALIDADA` y se cierra.
+- **Apertura por primer nombre:** la sesión ya sabe a qué deudor corresponde la
+  línea, así que el agente abre saludando y preguntando si habla con la persona
+  usando **solo su primer nombre** (p. ej. *"¿hablo con Liliana?"*). No revela el
+  nombre completo ni nada de la deuda antes de validar. Al prompt se le pasa solo
+  el primer nombre, nunca el nombre completo.
+- **Validez de identidad:** es válida solo si coinciden **cédula + nombre
+  completo + fecha de nacimiento** con el registro. La comparación de nombre es
+  *insensible a mayúsculas y tildes*. La **fecha de nacimiento es obligatoria**
+  (`YYYY-MM-DD`): si la persona aún no la da, la herramienta la pide con
+  `FECHA_REQUERIDA` sin gastar intento; si la da y no coincide, cuenta como fallo.
+  Tras `MAX_VALIDATION_ATTEMPTS = 3` intentos fallidos, la gestión pasa a
+  `IDENTIDAD_NO_VALIDADA` y se cierra.
 - **Cédula desconocida / mal formada:** devuelve un error estructurado
   `NO_ENCONTRADO`, de modo que esa rama es ejercitable.
 - **Dinero** entero en COP; **fechas** en formato `YYYY-MM-DD` (el compromiso
@@ -205,7 +210,7 @@ registrado con quién se habló, y el recado queda en `nota_contacto`.
 
 | Herramienta | Efecto / validación |
 |---|---|
-| `validar_identidad(documento, nombre_declarado, fecha_nacimiento_declarada?)` | La *herramienta* decide el match (cédula + nombre normalizados; `fecha_nacimiento` como segundo factor opcional). En éxito: `identidad_validada=True`, fija `nombre`, devuelve `tipo_documento` y marca `tipo_contacto=TITULAR`. |
+| `validar_identidad(documento, nombre_declarado, fecha_nacimiento_declarada)` | La *herramienta* decide el match: deben coincidir cédula + nombre + **fecha de nacimiento** (todos obligatorios; sin fecha responde `FECHA_REQUERIDA` sin gastar intento). En éxito: `identidad_validada=True`, fija `nombre`, devuelve `tipo_documento` y marca `tipo_contacto=TITULAR`. |
 | `registrar_contacto(documento, tipo_contacto, nota)` | Clasifica con quién se habla cuando NO es el titular: `tipo_contacto ∈ TipoContacto` (`TERCERO`, `NUMERO_EQUIVOCADO`, `TITULAR`). `nota` opcional = recado para el titular (sin datos de la deuda). |
 | `consultar_deuda(documento)` | Devuelve `{saldo, dias_mora, producto, fecha_corte}`. Bloqueada si la identidad no está validada. Cachea la deuda. |
 | `consultar_planes_pago(documento)` | 2–3 planes derivados del saldo (pago único con descuento, 3 y 6 cuotas). |
@@ -227,12 +232,16 @@ en el compromiso persistido.
   Agente de Cobranza Conversacional — Crecere (demo)
 ================================================================
 
-Agente: Buenas tardes, le habla el área de cobranza de Creceré. Para poder
-darle información, ¿me confirma su nombre completo, por favor?
+Agente: Buenas tardes, le habla el asistente virtual de Creceré. ¿Hablo con
+Liliana, por favor?
 
-Tú: Soy Liliana Ospina Cano
+Tú: Sí, con ella
 
-Agente: Gracias. Por seguridad, ¿me confirma su fecha de nacimiento?
+Agente: Gracias. Para confirmar su identidad, ¿me regala su nombre completo?
+
+Tú: Liliana Ospina Cano
+
+Agente: Perfecto. Y por seguridad, ¿su fecha de nacimiento?
 
 Tú: 14 de mayo de 1990
    ↪ [validar_identidad] ✓ {'validado': True, 'nombre': 'Liliana Ospina Cano', 'tipo_documento': 'CC'}
@@ -278,7 +287,7 @@ Compromiso:          100000 COP el 2026-07-04 (ref. CRC-5922)
 ### Caso especial: contesta un tercero (sin divulgar datos)
 
 ```
-Agente: Buenas tardes, ¿hablo con Liliana Ospina, por favor?
+Agente: Buenas tardes, ¿hablo con Liliana, por favor?
 
 Tú: No, soy el esposo. Ella no se encuentra ahora.
    ↪ [registrar_contacto] ✓ {'ok': True}

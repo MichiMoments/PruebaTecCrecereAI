@@ -116,23 +116,33 @@ class CobranzaTools:
         nombre_declarado: str,
         fecha_nacimiento_declarada: str = "",
     ) -> dict[str, Any]:
-        """Valida identidad: la cédula Y el nombre deben coincidir con el registro.
+        """Valida identidad: cédula, nombre Y fecha de nacimiento deben coincidir.
 
-        Es la herramienta —no el modelo— quien decide el match. Si se entrega
-        ``fecha_nacimiento_declarada`` (YYYY-MM-DD), se exige como **segundo
-        factor** y también debe coincidir. Tras ``MAX_VALIDATION_ATTEMPTS``
-        fallos, marca la gestión como ``IDENTIDAD_NO_VALIDADA`` y reporta
-        ``bloqueado=True`` para que el modelo cierre.
+        Es la herramienta —no el modelo— quien decide el match. La
+        ``fecha_nacimiento_declarada`` (YYYY-MM-DD) es **obligatoria**: si falta,
+        se pide sin gastar intento; si no coincide, cuenta como fallo. Tras
+        ``MAX_VALIDATION_ATTEMPTS`` fallos, marca la gestión como
+        ``IDENTIDAD_NO_VALIDADA`` y reporta ``bloqueado=True`` para que el modelo
+        cierre.
         """
         if self.state.profile.identidad_validada:
             return {"validado": True, "mensaje": "La identidad ya estaba validada."}
 
+        # La fecha es obligatoria. Si aún no la dan, no es un fallo de identidad:
+        # se pide sin consumir intento.
+        if not (fecha_nacimiento_declarada or "").strip():
+            return _error(
+                "FECHA_REQUERIDA",
+                "Para validar se requiere la fecha de nacimiento (YYYY-MM-DD).",
+            )
+
         record = buscar_deudor(documento)
-        coincide = record is not None and nombre_coincide(nombre_declarado, record)
-        # Segundo factor opcional: si la persona declara fecha de nacimiento,
-        # también debe coincidir.
-        if coincide and fecha_nacimiento_declarada:
-            coincide = fecha_nacimiento_coincide(fecha_nacimiento_declarada, record)
+        # El match exige las tres condiciones: cédula de sesión + nombre + fecha.
+        coincide = (
+            record is not None
+            and nombre_coincide(nombre_declarado, record)
+            and fecha_nacimiento_coincide(fecha_nacimiento_declarada, record)
+        )
 
         if coincide and self._documento_de_sesion(documento):
             self.state.marcar_identidad_validada(record["nombre"], "validar_identidad")
@@ -376,10 +386,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "validar_identidad",
         "description": (
-            "Valida la identidad del deudor. La cédula Y el nombre declarado "
-            "deben coincidir con el registro. Si la persona da su fecha de "
-            "nacimiento, pásala como segundo factor. Llamar ANTES de revelar "
-            "cualquier dato de la deuda."
+            "Valida la identidad del deudor. La cédula, el nombre declarado Y la "
+            "fecha de nacimiento deben coincidir con el registro. Pide el nombre "
+            "completo y la fecha ANTES de llamar (la fecha es obligatoria). "
+            "Llamar ANTES de revelar cualquier dato de la deuda."
         ),
         "parameters": {
             "type": "object",
@@ -393,12 +403,11 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": (
                         "Fecha de nacimiento que declara la persona, formato "
-                        "YYYY-MM-DD. Segundo factor opcional; si se entrega, debe "
-                        "coincidir con el registro."
+                        "YYYY-MM-DD. Obligatoria: debe coincidir con el registro."
                     ),
                 },
             },
-            "required": ["documento", "nombre_declarado"],
+            "required": ["documento", "nombre_declarado", "fecha_nacimiento_declarada"],
         },
     },
     {

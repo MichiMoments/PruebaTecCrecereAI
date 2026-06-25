@@ -25,7 +25,7 @@ for _stream in (sys.stdout, sys.stdin):
 
 from agent import AgentError, CobranzaAgent
 from config import SNAPSHOT_DIR
-from data import buscar_deudor, listar_deudores, normalizar_documento
+from data import buscar_deudor, listar_deudores, normalizar_documento, primer_nombre
 from state import EstadoGestion, StateManager, TipoContacto
 from tools import CobranzaTools
 
@@ -141,7 +141,12 @@ def main() -> None:
     print("=" * 64 + "\n")
 
     try:
-        agent = CobranzaAgent(tools, documento, on_tool_call=_trace_tool)
+        agent = CobranzaAgent(
+            tools,
+            documento,
+            primer_nombre(deudor["nombre"]),
+            on_tool_call=_trace_tool,
+        )
     except AgentError as exc:
         print(f"[Error de configuración] {exc}")
         return
@@ -152,8 +157,9 @@ def main() -> None:
         turno += 1
         state.turno_actual = turno
         apertura = agent.enviar(
-            "[SISTEMA] Inicia tú la llamada: saluda brevemente y solicita validar "
-            "la identidad de la persona."
+            "[SISTEMA] Inicia tú la llamada: saluda y pregunta si hablas con la "
+            "persona usando SOLO su primer nombre; cuando confirme, solicita validar "
+            "su identidad (nombre completo y fecha de nacimiento)."
         )
         print(f"Agente: {apertura}\n")
 

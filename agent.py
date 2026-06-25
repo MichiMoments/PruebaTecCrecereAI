@@ -33,11 +33,13 @@ class AgentError(RuntimeError):
     """Error no recuperable del agente (p. ej. API caída tras reintentos)."""
 
 
-def construir_system_prompt(documento: str) -> str:
+def construir_system_prompt(documento: str, primer_nombre: str) -> str:
     """Arma el prompt de sistema con la guía del flujo de cobranza.
 
     El flujo va como *guía*, no como transiciones de estado codificadas: el
-    modelo decide cuándo llamar cada herramienta.
+    modelo decide cuándo llamar cada herramienta. ``primer_nombre`` es SOLO el
+    primer nombre del titular de la línea, para saludar sin revelar la identidad
+    completa ni la deuda.
     """
     hoy = date.today().isoformat()
     return f"""\
@@ -47,19 +49,26 @@ entidad colombiana. Te presentas SIEMPRE como el asistente virtual de
 marcadores de relleno como "[Tu Nombre]" o "[Nombre de la entidad]".
 Hablas SIEMPRE en español de Colombia: cálido pero profesional, claro y conciso.
 La fecha de hoy es {hoy}. El documento en gestión de esta sesión es {documento}.
+Sabes que esta línea corresponde a {primer_nombre} (SOLO su primer nombre): úsalo
+para saludar, pero NO conoces (ni reveles) su nombre completo ni dato alguno de la
+deuda hasta que la identidad esté validada.
 
 OBJETIVO: gestionar el cobro de una obligación en mora, llegando idealmente a un
 compromiso de pago concreto (monto + fecha).
 
 FLUJO (es una guía, tú decides el momento de cada paso):
-1) Saludo y VALIDACIÓN DE IDENTIDAD. Pide el nombre completo y, como segundo
-   factor, la fecha de nacimiento; confírmalos con la herramienta
-   `validar_identidad` (pasa `nombre_declarado` y, si la dan, también
-   `fecha_nacimiento_declarada` en formato YYYY-MM-DD). Pregunta una cosa a la
-   vez. NO reveles ningún dato de la deuda hasta que la identidad esté validada.
-   Tienes hasta {MAX_VALIDATION_ATTEMPTS} intentos; si se agotan (la herramienta
-   responde bloqueado=true), discúlpate y cierra llamando
-   `actualizar_estado_gestion` con estado IDENTIDAD_NO_VALIDADA.
+1) APERTURA Y VALIDACIÓN DE IDENTIDAD. Abre saludando y preguntando si hablas con
+   {primer_nombre} (usa SOLO ese primer nombre; nunca el nombre completo ni datos
+   de la deuda). Si confirma que es la persona, pídele —una cosa a la vez— su
+   nombre completo y su fecha de nacimiento (formato YYYY-MM-DD), y valídalos con
+   `validar_identidad` pasando AMBOS argumentos obligatorios (`nombre_declarado` y
+   `fecha_nacimiento_declarada`); la fecha es obligatoria, no valides sin ella. NO
+   reveles ningún dato de la deuda hasta que la identidad esté validada. Si la
+   persona dice que no es {primer_nombre}, que es número equivocado o que es un
+   tercero, ve a CASOS ESPECIALES (no llames `validar_identidad`). Tienes hasta
+   {MAX_VALIDATION_ATTEMPTS} intentos; si se agotan (la herramienta responde
+   bloqueado=true), discúlpate y cierra llamando `actualizar_estado_gestion` con
+   estado IDENTIDAD_NO_VALIDADA.
 2) CONTEXTO DE LA DEUDA. Usa `consultar_deuda` y explica saldo, días de mora y
    producto. Usa SOLO las cifras que devuelva la herramienta; nunca inventes
    saldo, mora ni montos.
@@ -116,6 +125,7 @@ class CobranzaAgent:
         self,
         tools: CobranzaTools,
         documento: str,
+        primer_nombre: str,
         on_tool_call: Optional[Callable[[str, dict[str, Any], Any], None]] = None,
     ) -> None:
         api_key = os.environ.get(API_KEY_ENV)
@@ -138,7 +148,7 @@ class CobranzaAgent:
             for schema in TOOL_SCHEMAS
         ]
         self._config = types.GenerateContentConfig(
-            system_instruction=construir_system_prompt(documento),
+            system_instruction=construir_system_prompt(documento, primer_nombre),
             tools=[types.Tool(function_declarations=function_declarations)],
             # Bucle MANUAL: desactivamos la AFC para ejecutar las herramientas
             # nosotros mismos y demostrar que el modelo dirige la selección.

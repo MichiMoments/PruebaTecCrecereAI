@@ -56,6 +56,16 @@ def normalizar_nombre(nombre: str) -> str:
     return re.sub(r"\s+", " ", sin_tildes.strip().lower())
 
 
+def primer_nombre(nombre: str) -> str:
+    """Devuelve solo el primer nombre (primer token) de un nombre completo.
+
+    Se usa para saludar al deudor en la apertura de la llamada sin revelar su
+    nombre completo. ``""`` si el nombre viene vacío.
+    """
+    partes = (nombre or "").split()
+    return partes[0] if partes else ""
+
+
 # --- Datos semilla ---------------------------------------------------------
 # Varios deudores de prueba. La clave es la cédula ya normalizada (solo dígitos)
 # y el orden de los campos sigue el del esquema: identificación primero, deuda

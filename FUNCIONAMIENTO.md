@@ -116,15 +116,19 @@ Cuando ejecutas `python main.py [cedula]`, ocurre lo siguiente, en orden:
    quien prueba sepa a quién interpretar. Es información del **lado del gestor**
    (consola), no se le revela al titular sin validar.
 
-7. **Construir el agente**: `agent = CobranzaAgent(tools, documento, on_tool_call=_trace_tool)`
-   ([main.py:144](main.py#L144)). Aquí se lee la API key, se arma el system prompt
-   y la configuración de Gemini. Si falta la API key, lanza `AgentError`, que se
-   captura y termina con un mensaje legible ([main.py:145-147](main.py#L145-L147)).
+7. **Construir el agente**: `agent = CobranzaAgent(tools, documento,
+   primer_nombre(deudor["nombre"]), on_tool_call=_trace_tool)`
+   ([main.py:144-149](main.py#L144-L149)). Se le pasa **solo el primer nombre** del
+   deudor (para saludar, nunca el nombre completo). Aquí se lee la API key, se arma
+   el system prompt y la configuración de Gemini. Si falta la API key, lanza
+   `AgentError`, que se captura y termina con un mensaje legible.
 
-8. **Turno 1 — apertura forzada** ([main.py:152-158](main.py#L152-L158)): se fija
+8. **Turno 1 — apertura forzada** ([main.py:159-163](main.py#L159-L163)): se fija
    `state.turno_actual = 1` y se llama `agent.enviar("[SISTEMA] Inicia tú la
-   llamada...")`. Ese mensaje de sistema hace que **el agente hable primero**
-   (saluda y pide validar identidad), simulando que el gestor inicia la llamada.
+   llamada...")`. Ese mensaje de sistema hace que **el agente hable primero**:
+   saluda y pregunta si habla con la persona **usando solo su primer nombre**
+   (p. ej. *"¿hablo con Liliana?"*); al confirmar, pide nombre completo y fecha de
+   nacimiento para validar. Simula que el gestor inicia la llamada.
 
 ### 3.2 El bucle REPL (conversación)
 
@@ -260,7 +264,7 @@ mágicos dispersos.
 | `API_BACKOFF_BASE_SECONDS` | `1.5` | Base del backoff entre reintentos (se multiplica por el intento). Lo usa `_generar` ([agent.py:166](agent.py#L166)). |
 | `MAX_TOOL_ITERATIONS` | `8` | Tope de iteraciones del bucle de tool-calling por turno. Lo usa `enviar` ([agent.py:184](agent.py#L184)). |
 | `SNAPSHOT_DIR` | `<dir>/snapshots` | Carpeta donde se persisten los perfiles. La usa `main()` al crear el `StateManager` ([main.py:128](main.py#L128)). |
-| `MAX_VALIDATION_ATTEMPTS` | `3` | Intentos máximos de validación de identidad. Lo usan `validar_identidad` ([tools.py:149](tools.py#L149)) y el system prompt ([agent.py:60](agent.py#L60)). |
+| `MAX_VALIDATION_ATTEMPTS` | `3` | Intentos máximos de validación de identidad. Lo usan `validar_identidad` ([tools.py:159](tools.py#L159)) y el system prompt ([agent.py:69](agent.py#L69)). |
 | `PROCESS_REF` | `"CRC-5922"` | Referencia interna del proceso; se estampa en todo compromiso. La usa `registrar_compromiso_pago` ([tools.py:346](tools.py#L346)). |
 | `COMPANY_NAME` | `"Creceré"` | Identidad del agente; aparece en el system prompt ([agent.py:44](agent.py#L44)). |
 
@@ -273,7 +277,7 @@ solo responde consultas de datos crudos.
   de un deudor. El orden de campos refleja **dos bloques**:
   - *Identificación*: `tipo_documento` ("CC"/"CE"), `documento` (cédula
     normalizada), `nombre` (legal completo), `fecha_nacimiento` (`YYYY-MM-DD`,
-    segundo factor).
+    factor obligatorio de validación).
   - *Obligación*: `producto`, `saldo` (entero COP), `dias_mora`, `fecha_corte`.
 
 - **`normalizar_documento(documento) -> str`** ([data.py:35-41](data.py#L35-L41)):
@@ -286,6 +290,12 @@ solo responde consultas de datos crudos.
   minúsculas, **elimina tildes/diacríticos** (vía `unicodedata.normalize("NFD", ...)`
   filtrando categoría `Mn`) y colapsa espacios. Base de la comparación de nombre
   insensible a mayúsculas/acentos. La usa `nombre_coincide`.
+
+- **`primer_nombre(nombre) -> str`** ([data.py:59-66](data.py#L59-L66)): devuelve el
+  **primer token** del nombre completo (`""` si está vacío). Sirve para **saludar al
+  deudor en la apertura** sin revelar su nombre completo. La usa `main()` al
+  construir el agente ([main.py:147](main.py#L147)); el primer nombre llega al system
+  prompt, pero el nombre completo **nunca** se le pasa al modelo.
 
 - **`_DEUDORES`** (dict privado, [data.py:66-111](data.py#L66-L111)): los 4 deudores
   semilla, **clave = cédula normalizada**. Productos y rangos de saldo/mora distintos
@@ -315,9 +325,10 @@ solo responde consultas de datos crudos.
   ([tools.py:131](tools.py#L131)).
 
 - **`fecha_nacimiento_coincide(declarada, record) -> bool`**
-  ([data.py:129-140](data.py#L129-L140)): **segundo factor** de validación. Parsea
-  ambas fechas como `YYYY-MM-DD`; si la declarada no se puede interpretar, devuelve
-  `False`. La usa `validar_identidad` ([tools.py:135](tools.py#L135)).
+  ([data.py:139-150](data.py#L139-L150)): compara la fecha de nacimiento declarada
+  con la del registro (**factor obligatorio** de validación). Parsea ambas fechas
+  como `YYYY-MM-DD`; si la declarada no se puede interpretar, devuelve `False`. La
+  usa `validar_identidad`.
 
 ### 4.3 `state.py` — modelo de estado y único escritor
 
@@ -432,19 +443,21 @@ caiga.
 
 #### Las 8 herramientas
 
-1. **`validar_identidad(documento, nombre_declarado, fecha_nacimiento_declarada="")`**
-   ([tools.py:113-165](tools.py#L113-L165)):
+1. **`validar_identidad(documento, nombre_declarado, fecha_nacimiento_declarada)`**
+   ([tools.py:113](tools.py#L113)):
    - Si la identidad ya estaba validada, responde `{"validado": True, ...}` sin más.
-   - Busca el registro y compara el **nombre** (`nombre_coincide`). Si la persona
-     declaró **fecha de nacimiento**, la exige como **segundo factor**
+   - **La fecha de nacimiento es obligatoria.** Si llega vacía, responde
+     `_error("FECHA_REQUERIDA", ...)` **sin gastar intento** (es entrada incompleta,
+     no un fallo de identidad): el modelo debe pedir la fecha y reintentar.
+   - El **match exige las tres condiciones**: cédula de la sesión
+     (`_documento_de_sesion`) + nombre (`nombre_coincide`) + fecha
      (`fecha_nacimiento_coincide`).
-   - Si todo coincide **y** la cédula es la de la sesión: llama
-     `marcar_identidad_validada` y `set_contacto(TITULAR)`, y devuelve `validado:
-     True` + `nombre` + `tipo_documento`.
-   - Si falla: incrementa `validation_attempts`. Al agotar
-     `MAX_VALIDATION_ATTEMPTS` (3), fija `EstadoGestion.IDENTIDAD_NO_VALIDADA` y
-     responde `bloqueado: True`. Si quedan intentos, responde `validado: False` con
-     `intentos_restantes`.
+   - Si todo coincide: llama `marcar_identidad_validada` y `set_contacto(TITULAR)`, y
+     devuelve `validado: True` + `nombre` + `tipo_documento`.
+   - Si falla (nombre o fecha no coinciden): incrementa `validation_attempts`. Al
+     agotar `MAX_VALIDATION_ATTEMPTS` (3), fija
+     `EstadoGestion.IDENTIDAD_NO_VALIDADA` y responde `bloqueado: True`. Si quedan
+     intentos, responde `validado: False` con `intentos_restantes`.
    - **Es la herramienta —no el modelo— quien decide el match.**
 
 2. **`registrar_objecion(documento, tipo, detalle="")`**
@@ -510,14 +523,16 @@ caiga.
   recuperable del agente (API caída tras reintentos, o falta de API key). Lo captura
   `main()`.
 
-- **`construir_system_prompt(documento) -> str`** ([agent.py:36-109](agent.py#L36-L109)):
-  arma el system prompt. Inyecta la fecha de hoy (`date.today()`), el `documento` de
-  la sesión y `COMPANY_NAME`. El prompt define:
+- **`construir_system_prompt(documento, primer_nombre) -> str`**
+  ([agent.py:36](agent.py#L36)): arma el system prompt. Inyecta la fecha de hoy
+  (`date.today()`), el `documento` de la sesión, `COMPANY_NAME` y el **primer
+  nombre** del deudor (solo el primer nombre, para saludar). El prompt define:
   - **Identidad**: el agente es el asistente virtual de Creceré; nunca usa
     marcadores de relleno; habla siempre en español de Colombia.
-  - **Flujo de 5 pasos** (como *guía*, no transiciones codificadas): (1) saludo +
-    validación de identidad (nombre + fecha de nacimiento como 2.º factor; hasta
-    `MAX_VALIDATION_ATTEMPTS` intentos); (2) contexto de la deuda con
+  - **Flujo de 5 pasos** (como *guía*, no transiciones codificadas): (1) **apertura
+    saludando por el primer nombre** ("¿hablo con {primer_nombre}?") + validación de
+    identidad con nombre completo **y** fecha de nacimiento (ambos obligatorios;
+    hasta `MAX_VALIDATION_ATTEMPTS` intentos); (2) contexto de la deuda con
     `consultar_deuda`; (3) propuesta de planes con `consultar_planes_pago`; (4)
     manejo de objeciones (`registrar_objecion` / `registrar_disposicion`); (5)
     cierre con `registrar_compromiso_pago` + `actualizar_estado_gestion`.
@@ -528,8 +543,8 @@ caiga.
   - **Habeas Data (Ley 1266)**: solo el titular validado recibe información de la
     deuda.
 
-- **`CobranzaAgent.__init__(tools, documento, on_tool_call=None)`**
-  ([agent.py:115-150](agent.py#L115-L150)):
+- **`CobranzaAgent.__init__(tools, documento, primer_nombre, on_tool_call=None)`**
+  ([agent.py:124](agent.py#L124)):
   - Lee la API key de `API_KEY_ENV`; si falta, lanza `AgentError`.
   - Crea el cliente `genai.Client(api_key=...)`.
   - Convierte `TOOL_SCHEMAS` a `FunctionDeclaration` y arma el
